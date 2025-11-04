@@ -1,0 +1,310 @@
+---
+- name: Harden server and install CyberPanel (OpenLiteSpeed)
+  hosts: cyberpanel
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Assert supported OS (Ubuntu 22.04)
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] == 'Debian'
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_major_version'] | int >= 22
+        fail_msg: "This playbook targets Ubuntu 22.04+."
+        success_msg: "OS check passed."
+      tags: [hardening]
+
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ cp_hostname }}"
+      tags: [hardening]
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [hardening]
+
+  vars:
+    # UFW base allowed ports (HTTP/HTTPS + CyberPanel + OLS admin)
+    base_allowed_tcp_ports:
+      - 80
+      - 443
+      - 8090    # CyberPanel
+      - 7080    # OpenLiteSpeed WebAdmin (optional, keep closed if not needed)
+
+  tasks:
+    - name: Create admin user
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Add admin authorized key
+      ansible.builtin.authorized_key:
+        user: "{{ admin_user }}"
+        key: "{{ admin_pubkey }}"
+        manage_dir: true
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - software-properties-common
+          - chrony
+          - rsyslog
+          - lsb-release
+        state: present
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Configure unattended upgrades
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        content: |
+          Unattended-Upgrade::Origins-Pattern {
+            "origin=Ubuntu,codename=${distro_codename}-security,label=Ubuntu";
+          };
+          Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+          Unattended-Upgrade::Automatic-Reboot "true";
+          Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Enable unattended upgrades periodic config
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Configure SSH - change port
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Port '
+        line: "Port {{ ssh_port }}"
+        state: present
+        backrefs: false
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Configure SSH - disable root login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Configure SSH - disable password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Ensure SSH service is enabled and restarted
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+        enabled: true
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: UFW - set default inbound policy
+      community.general.ufw:
+        policy: deny
+        direction: incoming
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: UFW - allow outbound policy
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: UFW - allow SSH configured port
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: UFW - also allow default SSH (22) to avoid lockout (remove later)
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+      when: not cp_install_only and ssh_port != 22
+      tags: [hardening]
+
+    - name: UFW - allow base TCP ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ base_allowed_tcp_ports }}"
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: UFW - allow DNS if enabled (TCP)
+      community.general.ufw:
+        rule: allow
+        port: "53"
+        proto: tcp
+      when: not cp_install_only and enable_dns
+      tags: [hardening]
+
+    - name: UFW - allow DNS if enabled (UDP)
+      community.general.ufw:
+        rule: allow
+        port: "53"
+        proto: udp
+      when: not cp_install_only and enable_dns
+      tags: [hardening]
+
+    - name: UFW - allow mail ports if enabled
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: [25, 465, 587, 110, 143, 993, 995]
+      when: not cp_install_only and enable_mail
+      tags: [hardening]
+
+    - name: UFW - ensure firewall enabled
+      community.general.ufw:
+        state: enabled
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Configure Fail2Ban for SSH
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [DEFAULT]
+          bantime  = 1h
+          findtime = 10m
+          maxretry = 5
+
+          [sshd]
+          enabled = true
+          port    = {{ ssh_port }}
+          filter  = sshd
+          logpath = /var/log/auth.log
+          backend = systemd
+      notify: Restart Fail2Ban
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Ensure chrony is enabled and started
+      ansible.builtin.service:
+        name: chrony
+        state: started
+        enabled: true
+      when: not cp_install_only
+      tags: [hardening]
+
+    - name: Create swap file if enabled and no swap present
+      ansible.builtin.command: fallocate -l {{ swap_size_gb }}G /swapfile
+      args:
+        creates: /swapfile
+      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Set swap file permissions
+      ansible.builtin.file:
+        path: /swapfile
+        owner: root
+        group: root
+        mode: '0600'
+      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Make swap
+      ansible.builtin.command: mkswap /swapfile
+      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Enable swap
+      ansible.builtin.command: swapon /swapfile
+      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Persist swap in fstab
+      ansible.builtin.mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Reduce swappiness
+      ansible.builtin.sysctl:
+        name: vm.swappiness
+        value: '10'
+        state: present
+        reload: true
+      when: not cp_install_only and enable_swap
+      tags: [hardening]
+
+    - name: Download CyberPanel installer
+      ansible.builtin.get_url:
+        url: https://cyberpanel.net/install.sh
+        dest: /root/cyberpanel_install.sh
+        mode: '0755'
+      when: not hardening_only
+      tags: [cyberpanel]
+
+    - name: Run CyberPanel installer (interactive via expect)
+      ansible.builtin.expect:
+        command: bash /root/cyberpanel_install.sh
+        timeout: 7200
+        creates: /usr/local/CyberCP
+        responses:
+          # General start/confirmation
+          '.*Install CyberPanel.*(y/n).*': 'y\n'
+          '.*Please choose a version.*Full.*\(1\).*Minimal.*\(2\).*': "{{ '1\n' if cp_full_install else '2\n' }}"
+          '.*Choose Web server.*OpenLiteSpeed.*\(1\).*LiteSpeed.*\(2\).*': "{{ '1\n' if cp_openlitespeed else '2\n' }}"
+          '.*Do you want to set up Remote MySQL.*(y/n).*': 'n\n'
+          '.*Do you want to install Memcached.*(Y/n|y/n).*': "{{ 'y\n' if cp_install_memcached else 'n\n' }}"
+          '.*Do you want to install Redis.*(Y/n|y/n).*': "{{ 'y\n' if cp_install_redis else 'n\n' }}"
+          '.*Do you want to install WatchDog.*(Y/n|y/n).*': "{{ 'y\n' if cp_install_watchdog else 'n\n' }}"
+          '.*Please enter your admin password.*': "{{ cp_admin_password }}\n"
+          '.*Retype your admin password.*': "{{ cp_admin_password }}\n"
+          '.*Press any key to continue.*': '\n'
+          '.*Would you like to restart.*(y/n).*': 'y\n'
+      register: cp_install_result
+      when: not hardening_only
+      tags: [cyberpanel]
+
+  handlers:
+    - name: Restart Fail2Ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: restarted

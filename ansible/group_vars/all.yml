@@ -1,0 +1,34 @@
+# Global variables for CyberPanel deployment
+
+# FQDN for the server (must resolve to the server's IP)
+cp_hostname: "panel.example.com"
+
+# Create a sudo user for admin access (SSH key required)
+admin_user: "sysadmin"
+admin_pubkey: "ssh-ed25519 AAAA...replace_with_your_public_key"
+
+# SSH daemon port (change from 22 if desired)
+ssh_port: 22
+
+# Enable swap on systems with low memory
+enable_swap: true
+swap_size_gb: 2
+
+# Open optional services in firewall
+enable_dns: false
+enable_mail: false
+
+# CyberPanel admin password (used by the installer)
+cp_admin_password: "ChangeMe-Strong-Password-123!"
+
+# Control installer behavior
+hardening_only: false
+cp_install_only: false
+
+# Choose component installs
+cp_full_install: true          # true = Full, false = Minimal
+cp_openlitespeed: true         # true = OpenLiteSpeed (free), false = LiteSpeed Enterprise
+cp_install_memcached: true
+cp_install_redis: true
+cp_install_watchdog: false
+
