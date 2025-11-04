@@ -98,8 +98,10 @@ Next steps:
 - Choose: Full install, OpenLiteSpeed, local MariaDB, and (optionally) Memcached/Redis.
 - Set a strong admin password when prompted.
 - Once complete, visit: https://<your-ip-or-fqdn>:8090/
+- Remove the temporary `ufw allow 22/tcp` rule after verifying your new SSH port works.
+- Optional security extras: `apt install clamav clamav-daemon` for antivirus and deploy Linux Malware Detect (see Ansible playbook for automation).
+- For WordPress sites, enable Let's Encrypt, keep LiteSpeed Cache active, and enforce plugin/core auto-updates via CyberPanel ➜ WordPress Manager.
 
 EONOTE
 
 echo "[+] Done. Verify SSH access on port ${SSH_PORT} before closing your current session."
-

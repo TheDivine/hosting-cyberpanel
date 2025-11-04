@@ -72,6 +72,76 @@
       when: not cp_install_only
       tags: [hardening]
 
+    - name: Install ClamAV malware scanner
+      ansible.builtin.apt:
+        name:
+          - clamav
+          - clamav-daemon
+        state: present
+      when: not cp_install_only and enable_clamav
+      tags: [malware]
+
+    - name: Ensure ClamAV log directory exists
+      ansible.builtin.file:
+        path: /var/log/clamav
+        state: directory
+        owner: root
+        group: clamav
+        mode: '0750'
+      when: not cp_install_only and enable_clamav
+      tags: [malware]
+
+    - name: Ensure FreshClam signature service is running
+      ansible.builtin.service:
+        name: clamav-freshclam
+        state: started
+        enabled: true
+      when: not cp_install_only and enable_clamav
+      tags: [malware]
+
+    - name: Schedule daily ClamAV scan
+      ansible.builtin.cron:
+        name: Daily ClamAV scan
+        user: root
+        hour: "{{ clamav_scan_hour }}"
+        minute: "{{ clamav_scan_minute }}"
+        job: "/usr/bin/nice -n 15 /usr/bin/clamscan --recursive --infected --log=/var/log/clamav/daily-scan.log {{ malware_scan_paths | join(' ') }} || true"
+      when: not cp_install_only and enable_clamav
+      tags: [malware]
+
+    - name: Install Linux Malware Detect
+      ansible.builtin.shell: |
+        set -euo pipefail
+        tmpdir=$(mktemp -d)
+        trap 'rm -rf "$tmpdir"' EXIT
+        cd "$tmpdir"
+        wget -q https://www.rfxn.com/downloads/maldetect-current.tar.gz
+        tar -xzf maldetect-current.tar.gz
+        cd maldetect-*
+        ./install.sh >/dev/null
+      args:
+        creates: /usr/local/sbin/maldet
+      when: not cp_install_only and enable_maldet
+      tags: [malware]
+
+    - name: Enable ClamAV engine within Maldet
+      ansible.builtin.lineinfile:
+        path: /usr/local/maldetect/conf.maldet
+        regexp: '^scan_clamscan='
+        line: 'scan_clamscan="1"'
+      when: not cp_install_only and enable_maldet and enable_clamav
+      tags: [malware]
+
+    - name: Schedule daily Maldet scan
+      ansible.builtin.cron:
+        name: Daily Maldet scan
+        user: root
+        hour: "{{ maldet_scan_hour }}"
+        minute: "{{ maldet_scan_minute }}"
+        job: "/usr/bin/nice -n 15 /usr/local/sbin/maldet -b -r {{ malware_scan_paths | join(' ') }} 2>&1 | /usr/bin/logger -t maldet"
+      when: not cp_install_only and enable_maldet
+      tags: [malware]
+
     - name: Configure unattended upgrades
       ansible.builtin.copy:
         dest: /etc/apt/apt.conf.d/50unattended-upgrades

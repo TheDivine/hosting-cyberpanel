@@ -32,3 +32,12 @@ cp_install_memcached: true
 cp_install_redis: true
 cp_install_watchdog: false
 
+# Malware defenses
+enable_clamav: true
+enable_maldet: true
+malware_scan_paths:
+  - /home
+clamav_scan_hour: 3
+clamav_scan_minute: 30
+maldet_scan_hour: 2
+maldet_scan_minute: 0
