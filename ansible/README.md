@@ -70,7 +70,7 @@ Malware Scanning & Performance Automation
   - Tunes MariaDB automatically (`mariadb_tuning`, `mariadb_buffer_pool_pct`) and writes `/etc/mysql/mariadb.conf.d/90-cloudpanel-tuning.cnf`.
   - Installs and hardens Redis (`enable_redis`, `redis_bind_address`, `redis_maxmemory_percent`) for WordPress object/page caching.
   - All services restart as needed with handlers so your settings persist across runs.
-  - Install script uses `cloudpanel_database` (`mysql` or `mariadb`) and version knobs (`cloudpanel_mysql_version`, `cloudpanel_mariadb_version`) so you can align with supported DB engines on Ubuntu 22.04. Default is MySQL 8.0 because CloudPanel currently rejects MySQL 8.4 on Jammy.
+  - Installer honors `cloudpanel_db_engine` (default `MYSQL_8.0`; switch to `MARIADB_10.11` if you prefer MariaDB per CloudPanel docs).
 
 CloudPanel Variable Quick Reference (`ansible/group_vars/all.yml`)
 - `enable_redis`: Toggle Redis deployment (default true).
