@@ -116,8 +116,10 @@
         trap 'rm -rf "$tmpdir"' EXIT
         cd "$tmpdir"
         wget -q https://www.rfxn.com/downloads/maldetect-current.tar.gz
+        # Determine extracted directory name from the archive contents (first top-level entry)
+        top_entry=$(tar -tzf maldetect-current.tar.gz | head -1 | cut -d/ -f1)
         tar -xzf maldetect-current.tar.gz
-        cd maldetect-*
+        cd "$top_entry"
         ./install.sh >/dev/null
       args:
         creates: /usr/local/sbin/maldet
