@@ -105,6 +105,12 @@
       failed_when: false
       tags: [hardening]
 
+    - name: Determine CloudPanel database flag
+      ansible.builtin.set_fact:
+        cloudpanel_db_flag: >-
+          {{ '--mysql ' + cloudpanel_mysql_version if cloudpanel_database | lower == 'mysql' else '--mariadb ' + cloudpanel_mariadb_version }}
+      tags: [cloudpanel]
+
     - name: Replace nocix URIs with Canonical archive in apt config
       ansible.builtin.replace:
         path: "{{ item.path }}"
@@ -424,7 +430,7 @@
       ansible.builtin.shell: |
         set -euo pipefail
         curl -sSL https://installer.cloudpanel.io/ce/v2/install.sh -o /root/cloudpanel_install.sh
-        bash /root/cloudpanel_install.sh --mariadb {{ cloudpanel_mariadb_version }}
+        bash /root/cloudpanel_install.sh {{ cloudpanel_db_flag }}
       args:
         creates: /usr/sbin/cloudpanel
         executable: /bin/bash
