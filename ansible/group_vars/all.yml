@@ -1,10 +1,10 @@
 # Global variables for CyberPanel deployment
 
 # FQDN for the server (must resolve to the server's IP)
-cp_hostname: "panel.example.com"
+cp_hostname: "cpanel.kwiki.it.com"
 
 # Create a sudo user for admin access (SSH key required)
-admin_user: "sysadmin"
+admin_user: "customer"
 admin_pubkey: "ssh-ed25519 AAAA...replace_with_your_public_key"
 
 # SSH daemon port (change from 22 if desired)
