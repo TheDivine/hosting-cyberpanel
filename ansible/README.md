@@ -23,7 +23,7 @@ Quick Start (Fresh Server)
    - Generate: `ssh-keygen -t ed25519 -a 100 -C "customer@<panel-fqdn>" -f ~/.ssh/id_ed25519_panel`
    - Copy: `ssh-copy-id -i ~/.ssh/id_ed25519_panel.pub customer@<server-ip>`
    - Test: `ssh -i ~/.ssh/id_ed25519_panel customer@<server-ip>`
-   - Optional inventory entry: add `ansible_ssh_private_key_file=~/.ssh/id_ed25519_panel`
+   - Inventory defaults to this key path (`ansible/inventory.ini` already references `~/.ssh/id_ed25519_panel`); update if you store the key elsewhere.
 4) Ensure DNS A record points your FQDN to the server (e.g., `cyberpanel.naturecure.blog -> <server-ip>`), then run one of the playbooks (CloudPanel is the default recommendation):
 
    CloudPanel (default): ansible-playbook -i ansible/inventory.ini ansible/cloudpanel.yml
