@@ -1,0 +1,257 @@
+---
+- name: Harden server and install HestiaCP
+  hosts: cyberpanel
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Assert supported OS (Ubuntu 22.04)
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] == 'Debian'
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_major_version'] | int >= 22
+        fail_msg: "This playbook targets Ubuntu 22.04+."
+        success_msg: "OS check passed."
+      tags: [hardening]
+
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ cp_hostname }}"
+      tags: [hardening]
+
+    - name: Ensure official Ubuntu repositories are available
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/ubuntu-official.list
+        content: |
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} main universe multiverse
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }}-updates main universe multiverse
+          deb http://security.ubuntu.com/ubuntu {{ ansible_distribution_release }}-security main universe multiverse
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [hardening]
+
+    - name: Gather optional apt source list files
+      ansible.builtin.find:
+        paths: /etc/apt/sources.list.d
+        patterns: '*.list'
+        file_type: file
+      register: apt_source_lists
+      failed_when: false
+      tags: [hardening]
+
+    - name: Build list of apt source files
+      ansible.builtin.set_fact:
+        nocix_list_files: "{{ ['/etc/apt/sources.list'] + (apt_source_lists.files | default([]) | map(attribute='path') | list) }}"
+      tags: [hardening]
+
+    - name: Disable provider mirror entries (repo.nocix.net)
+      ansible.builtin.replace:
+        path: "{{ item }}"
+        regexp: '^(deb.*repo\\.nocix\\.net.*)$'
+        replace: '# \1'
+      loop: "{{ nocix_list_files }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [hardening]
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [hardening]
+
+  vars:
+    base_allowed_tcp_ports:
+      - 80
+      - 443
+      - 8083    # HestiaCP panel
+
+  tasks:
+    - name: Create admin user
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+      tags: [hardening]
+
+    - name: Add admin authorized key (if provided)
+      ansible.builtin.authorized_key:
+        user: "{{ admin_user }}"
+        key: "{{ admin_pubkey }}"
+        manage_dir: true
+      when: admin_pubkey is defined and admin_pubkey | length > 10
+      tags: [hardening]
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+          - ca-certificates
+          - gnupg
+          - software-properties-common
+          - chrony
+          - rsyslog
+          - lsb-release
+        state: present
+      tags: [hardening]
+
+    - name: Configure unattended upgrades
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        content: |
+          Unattended-Upgrade::Origins-Pattern {
+            "origin=Ubuntu,codename=${distro_codename}-security,label=Ubuntu";
+          };
+          Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+          Unattended-Upgrade::Automatic-Reboot "true";
+          Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+      tags: [hardening]
+
+    - name: Enable unattended upgrades periodic config
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+      tags: [hardening]
+
+    - name: Configure SSH - change port
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Port '
+        line: "Port {{ ssh_port }}"
+        state: present
+      tags: [hardening]
+
+    - name: Configure SSH - disable root login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+      tags: [hardening]
+
+    - name: Configure SSH - disable password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+      tags: [hardening]
+
+    - name: Ensure SSH service is enabled and restarted
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+        enabled: true
+      tags: [hardening]
+
+    - name: UFW - set default inbound policy
+      community.general.ufw:
+        policy: deny
+        direction: incoming
+      tags: [hardening]
+
+    - name: UFW - allow outbound policy
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+      tags: [hardening]
+
+    - name: UFW - allow SSH configured port
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+      tags: [hardening]
+
+    - name: UFW - also allow default SSH (22) to avoid lockout (remove later)
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+      when: ssh_port != 22
+      tags: [hardening]
+
+    - name: UFW - allow base TCP ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ base_allowed_tcp_ports }}"
+      tags: [hardening]
+
+    - name: UFW - ensure firewall enabled
+      community.general.ufw:
+        state: enabled
+      tags: [hardening]
+
+    - name: Configure Fail2Ban for SSH
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [DEFAULT]
+          bantime  = 1h
+          findtime = 10m
+          maxretry = 5
+
+          [sshd]
+          enabled = true
+          port    = {{ ssh_port }}
+          filter  = sshd
+          logpath = /var/log/auth.log
+          backend = systemd
+      notify: Restart Fail2Ban
+      tags: [hardening]
+
+    - name: Ensure chrony is enabled and started
+      ansible.builtin.service:
+        name: chrony
+        state: started
+        enabled: true
+      tags: [hardening]
+
+    - name: Download Hestia installer
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/hestiacp/hestiacp/release/install/hst-install.sh
+        dest: /root/hst-install.sh
+        mode: '0755'
+      tags: [hestia]
+
+    - name: Run Hestia installer (non-interactive minimal web stack)
+      ansible.builtin.command:
+        cmd: >-
+          bash /root/hst-install.sh
+          --interactive no
+          --force yes
+          --with-debs no
+          --hostname {{ cp_hostname }}
+          --port 8083
+          --email {{ hestia_admin_email }}
+          --password {{ hestia_admin_password }}
+          --apache no --nginx yes --phpfpm yes
+          --multiphp yes
+          --vsftpd yes
+          --proftpd no
+          --named {{ 'yes' if enable_dns else 'no' }}
+          --mysql yes --postgresql no
+          --exim no --dovecot no --clamav no --spamassassin no
+          --iptables yes --fail2ban yes
+          --softaculous no
+        creates: /usr/local/hestia
+      tags: [hestia]
+
+  handlers:
+    - name: Restart Fail2Ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: restarted

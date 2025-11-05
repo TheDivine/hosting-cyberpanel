@@ -5,6 +5,9 @@ Overview
 - Applies baseline server hardening (SSH, firewall, fail2ban, unattended upgrades, swap, time sync).
 - Opens only required ports (80/443/8090 by default). Optional DNS and mail ports are toggleable.
 - Adds optional scheduled malware scanning (ClamAV + Linux Malware Detect).
+- Alternative playbooks included for HestiaCP and CloudPanel:
+  - HestiaCP: `ansible/hestia.yml` (panel on 8083)
+  - CloudPanel: `ansible/cloudpanel.yml` (panel on 8443)
 
 Requirements
 - Target: Fresh Ubuntu 22.04 VPS or bare‑metal server with FQDN ready (e.g., panel.example.com)
@@ -12,13 +15,22 @@ Requirements
 - If using the automated installer step: Python `pexpect` on the control node (`pip install pexpect`)
 - UFW tasks use the `community.general` collection (`ansible-galaxy collection install community.general`)
 
-Quick Start
+Quick Start (Fresh Server)
 1) Edit `ansible/inventory.ini` to include your server and SSH details.
 2) Edit `ansible/group_vars/all.yml` to set hostname, SSH port, and admin password.
    - For password-based SSH, do not store the password in Git; run Ansible with prompts (`--ask-pass --ask-become-pass`).
-3) Run:
+3) Create or copy an SSH key and test access (recommended)
+   - Generate: `ssh-keygen -t ed25519 -a 100 -C "customer@<panel-fqdn>" -f ~/.ssh/id_ed25519_panel`
+   - Copy: `ssh-copy-id -i ~/.ssh/id_ed25519_panel.pub customer@<server-ip>`
+   - Test: `ssh -i ~/.ssh/id_ed25519_panel customer@<server-ip>`
+   - Inventory defaults to this key path (`ansible/inventory.ini` already references `~/.ssh/id_ed25519_panel`); update if you store the key elsewhere.
+4) Ensure DNS A record points your FQDN to the server (e.g., `cyberpanel.naturecure.blog -> <server-ip>`).
+5) Run one of the playbooks (CloudPanel is the default recommendation). Each playbook now:
+   - Drops `/etc/apt/sources.list.d/ubuntu-official.list` and comments out `repo.nocix.net` entries so installs come from Canonical archives (needed for packages like ClamAV). Remove or adjust these tasks if your provider restricts external repos.
 
-   ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+   CloudPanel (default): ansible-playbook -i ansible/inventory.ini ansible/cloudpanel.yml
+   CyberPanel:           ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+   HestiaCP:             ansible-playbook -i ansible/inventory.ini ansible/hestia.yml
 
 Notes
 - By default, the playbook hardens the server and installs CyberPanel using OpenLiteSpeed.
@@ -31,7 +43,7 @@ Security Defaults
 - Creates a new sudo user and disables root SSH login and password auth (key-based only).
 - Changes SSH port (set via `ssh_port`). Make sure your security groups/firewalls allow it.
 - Enables UFW with default deny inbound, allow outbound.
-- Enables Fail2Ban for SSH.
+- Enables Fail2Ban for SSH (all playbooks configure `jail.local`).
 - Enables unattended security updates and time sync.
 
 SSH Key Setup (first run ease and security)
@@ -48,12 +60,36 @@ High-memory servers
 - With large RAM (e.g., 72 GiB), swap is not needed; this playbook sets `enable_swap: false` by default. If you want swap for crash-dumps or hibernation, flip it back to `true` and re-run.
 - Malware scans are scheduled with low CPU priority via `nice` and can be moved to off-peak hours using `clamav_scan_*`/`maldet_scan_*` variables.
 
-Malware Scanning
+Malware Scanning & Performance Automation
 - Controlled via `enable_clamav` and `enable_maldet` in `group_vars/all.yml`. Disable either if you prefer a different stack.
 - Default scan paths are set with `malware_scan_paths` (defaults to `/home`). Add additional directories that store customer content.
 - ClamAV signatures update automatically (`clamav-freshclam` service). Logs land in `/var/log/clamav/daily-scan.log`.
 - Maldet runs a daily background scan (`/usr/local/sbin/maldet -b`) and records detections in syslog (`journalctl -t maldet`).
-- Tune scan windows via `clamav_scan_*` and `maldet_scan_*` variables to fit off-peak hours.
+ - Tune scan windows via `clamav_scan_*` and `maldet_scan_*` variables to fit off-peak hours.
+- CloudPanel automation additionally:
+  - Tunes MariaDB automatically (`mariadb_tuning`, `mariadb_buffer_pool_pct`) and writes `/etc/mysql/mariadb.conf.d/90-cloudpanel-tuning.cnf`.
+  - Installs and hardens Redis (`enable_redis`, `redis_bind_address`, `redis_maxmemory_percent`) for WordPress object/page caching.
+  - All services restart as needed with handlers so your settings persist across runs.
+  - Installer honors `cloudpanel_db_engine` (default `MYSQL_8.0`; switch to `MARIADB_10.11` if you prefer MariaDB per CloudPanel docs).
+
+CloudPanel Variable Quick Reference (`ansible/group_vars/all.yml`)
+- `enable_redis`: Toggle Redis deployment (default true).
+- `redis_bind_address`: Usually `127.0.0.1`; change only if exposing Redis.
+- `redis_maxmemory_percent`: Percentage of total RAM reserved for Redis (default 25%).
+- `mariadb_tuning`: Enable/disable MariaDB tuning drop-in.
+- `mariadb_buffer_pool_pct`: Percent of RAM dedicated to InnoDB buffer pool (default 60%).
+- Values calculate dynamically per server; rerun the playbook after hardware changes to regenerate configs.
+
+Choose a Panel: Pros/Cons (quick)
+- CyberPanel (OpenLiteSpeed)
+  - Pros: Very fast LSCache/QUIC; WP one-click; free OLS.
+  - Cons: Some advanced manager features are paid.
+- HestiaCP (Nginx+PHP-FPM)
+  - Pros: Free, simple, built-in quick install for WordPress; familiar panel.
+  - Cons: Fewer performance features vs OLS unless tuned; app installer is basic.
+- CloudPanel (Nginx + PHP-FPM, MariaDB)
+  - Pros: Modern UI, one-click WordPress, multiple PHP versions per site.
+  - Cons: Opinionated stack; fewer bundled mail/DNS features (good if you separate mail/DNS).
 
 WordPress Hosting Best Practices
 - Create a dedicated CyberPanel website (and system user) per customer. Apply resource limits via Packages for predictable performance.

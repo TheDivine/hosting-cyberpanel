@@ -1,5 +1,5 @@
 ---
-- name: Harden server and install CyberPanel (OpenLiteSpeed)
+- name: Harden server and install CloudPanel
   hosts: cyberpanel
   become: true
   gather_facts: true
@@ -20,40 +20,117 @@
         name: "{{ cp_hostname }}"
       tags: [hardening]
 
-    - name: Ensure official Ubuntu repositories are available
+    - name: Check if primary apt sources list exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list
+      register: apt_sources_list_stat
+      tags: [hardening]
+
+    - name: Check if provider sources backup exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.provider
+      register: apt_sources_backup_stat
+      tags: [hardening]
+
+    - name: Backup provider sources list
       ansible.builtin.copy:
-        dest: /etc/apt/sources.list.d/ubuntu-official.list
+        src: /etc/apt/sources.list
+        dest: /etc/apt/sources.list.provider
+        owner: root
+        group: root
+        mode: '0644'
+        remote_src: true
+      when: apt_sources_list_stat.stat.exists and not apt_sources_backup_stat.stat.exists
+      tags: [hardening]
+
+    - name: Remove existing primary apt sources list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list
+        state: absent
+      when: apt_sources_list_stat.stat.exists
+      tags: [hardening]
+
+    - name: Check if /etc/apt/sources.list.d exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d
+      register: apt_sources_d_stat
+      tags: [hardening]
+
+    - name: Find apt source snippets (.list)
+      ansible.builtin.find:
+        paths: /etc/apt/sources.list.d
+        patterns: '*.list'
+        file_type: file
+      register: apt_list_snippets
+      when: apt_sources_d_stat.stat.exists
+      tags: [hardening]
+
+    - name: Find apt source snippets (.sources)
+      ansible.builtin.find:
+        paths: /etc/apt/sources.list.d
+        patterns: '*.sources'
+        file_type: file
+      register: apt_sources_snippets
+      when: apt_sources_d_stat.stat.exists
+      tags: [hardening]
+
+    - name: Remove provider apt source snippets
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ (apt_list_snippets.files | default([])) + (apt_sources_snippets.files | default([])) }}"
+      when: (apt_list_snippets is defined) or (apt_sources_snippets is defined)
+      tags: [hardening]
+
+    - name: Ensure canonical apt sources list present
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list
         content: |
-          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} main universe multiverse
-          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }}-updates main universe multiverse
-          deb http://security.ubuntu.com/ubuntu {{ ansible_distribution_release }}-security main universe multiverse
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }}-updates main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }}-backports main restricted universe multiverse
+          deb http://security.ubuntu.com/ubuntu {{ ansible_distribution_release }}-security main restricted universe multiverse
         owner: root
         group: root
         mode: '0644'
       tags: [hardening]
 
-    - name: Gather optional apt source list files
+    - name: Find any apt config files that may reference nocix
       ansible.builtin.find:
-        paths: /etc/apt/sources.list.d
-        patterns: '*.list'
+        paths: /etc/apt
+        recurse: true
+        patterns: '*.list,*.sources,*.conf,*.cfg'
         file_type: file
-      register: apt_source_lists
+      register: apt_any_configs
       failed_when: false
       tags: [hardening]
 
-    - name: Build list of apt source files
-      ansible.builtin.set_fact:
-        nocix_list_files: "{{ ['/etc/apt/sources.list'] + (apt_source_lists.files | default([]) | map(attribute='path') | list) }}"
+    - name: Replace nocix URIs with Canonical archive in apt config
+      ansible.builtin.replace:
+        path: "{{ item.path }}"
+        regexp: 'http://repo\\.nocix\\.net/repo/ubuntu'
+        replace: 'http://archive.ubuntu.com/ubuntu'
+      loop: "{{ apt_any_configs.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path }}"
       tags: [hardening]
 
-    - name: Disable provider mirror entries (repo.nocix.net)
+    - name: "Disable nocix in Deb822 sources (set Enabled: no)"
       ansible.builtin.replace:
-        path: "{{ item }}"
-        regexp: '^(deb.*repo\\.nocix\\.net.*)$'
-        replace: '# \1'
-      loop: "{{ nocix_list_files }}"
+        path: "{{ item.path }}"
+        regexp: '^(Enabled:\\s*)yes$'
+        replace: '\\1no'
+      loop: "{{ apt_any_configs.files | default([]) }}"
+      when:
+        - item.path is defined
+        - item.path | regex_search('.*\\.sources$')
       loop_control:
-        label: "{{ item }}"
+        label: "{{ item.path }}"
+      tags: [hardening]
+
+    - name: Clean APT cache after source changes
+      ansible.builtin.command: apt-get clean
+      changed_when: false
       tags: [hardening]
 
     - name: Update apt cache
@@ -63,12 +140,10 @@
       tags: [hardening]
 
   vars:
-    # UFW base allowed ports (HTTP/HTTPS + CyberPanel + OLS admin)
     base_allowed_tcp_ports:
       - 80
       - 443
-      - 8090    # CyberPanel
-      - 7080    # OpenLiteSpeed WebAdmin (optional, keep closed if not needed)
+      - 8443    # CloudPanel UI
 
   tasks:
     - name: Create admin user
@@ -78,15 +153,14 @@
         groups: sudo
         append: true
         create_home: true
-      when: not cp_install_only
       tags: [hardening]
 
-    - name: Add admin authorized key
-      ansible.builtin.authorized_key:
+    - name: Add admin authorized key (if provided)
+      ansible.posix.authorized_key:
         user: "{{ admin_user }}"
         key: "{{ admin_pubkey }}"
         manage_dir: true
-      when: not cp_install_only
+      when: admin_pubkey is defined and admin_pubkey | length > 10
       tags: [hardening]
 
     - name: Install base packages
@@ -104,7 +178,6 @@
           - rsyslog
           - lsb-release
         state: present
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Install ClamAV malware scanner
@@ -113,7 +186,7 @@
           - clamav
           - clamav-daemon
         state: present
-      when: not cp_install_only and enable_clamav
+      when: enable_clamav
       tags: [malware]
 
     - name: Ensure ClamAV log directory exists
@@ -123,7 +196,7 @@
         owner: root
         group: clamav
         mode: '0750'
-      when: not cp_install_only and enable_clamav
+      when: enable_clamav
       tags: [malware]
 
     - name: Ensure FreshClam signature service is running
@@ -131,7 +204,7 @@
         name: clamav-freshclam
         state: started
         enabled: true
-      when: not cp_install_only and enable_clamav
+      when: enable_clamav
       tags: [malware]
 
     - name: Schedule daily ClamAV scan
@@ -141,7 +214,7 @@
         hour: "{{ clamav_scan_hour }}"
         minute: "{{ clamav_scan_minute }}"
         job: "/usr/bin/nice -n 15 /usr/bin/clamscan --recursive --infected --log=/var/log/clamav/daily-scan.log {{ malware_scan_paths | join(' ') }} || true"
-      when: not cp_install_only and enable_clamav
+      when: enable_clamav
       tags: [malware]
 
     - name: Install Linux Malware Detect
@@ -151,7 +224,6 @@
         trap 'rm -rf "$tmpdir"' EXIT
         cd "$tmpdir"
         wget -q https://www.rfxn.com/downloads/maldetect-current.tar.gz
-        # Determine extracted directory name from the archive contents (first top-level entry)
         set +o pipefail
         top_entry=$(tar -tzf maldetect-current.tar.gz | head -n1 | cut -d/ -f1 || true)
         set -o pipefail
@@ -165,7 +237,7 @@
       args:
         creates: /usr/local/sbin/maldet
         executable: /bin/bash
-      when: not cp_install_only and enable_maldet
+      when: enable_maldet
       tags: [malware]
 
     - name: Enable ClamAV engine within Maldet
@@ -173,7 +245,7 @@
         path: /usr/local/maldetect/conf.maldet
         regexp: '^scan_clamscan='
         line: 'scan_clamscan="1"'
-      when: not cp_install_only and enable_maldet and enable_clamav
+      when: enable_maldet and enable_clamav
       tags: [malware]
 
     - name: Schedule daily Maldet scan
@@ -183,7 +255,7 @@
         hour: "{{ maldet_scan_hour }}"
         minute: "{{ maldet_scan_minute }}"
         job: "/usr/bin/nice -n 15 /usr/local/sbin/maldet -b -r {{ malware_scan_paths | join(' ') }} 2>&1 | /usr/bin/logger -t maldet"
-      when: not cp_install_only and enable_maldet
+      when: enable_maldet
       tags: [malware]
 
     - name: Configure unattended upgrades
@@ -197,7 +269,6 @@
           Unattended-Upgrade::Remove-Unused-Dependencies "true";
           Unattended-Upgrade::Automatic-Reboot "true";
           Unattended-Upgrade::Automatic-Reboot-Time "03:30";
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Enable unattended upgrades periodic config
@@ -206,7 +277,6 @@
         content: |
           APT::Periodic::Update-Package-Lists "1";
           APT::Periodic::Unattended-Upgrade "1";
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Configure SSH - change port
@@ -215,8 +285,6 @@
         regexp: '^#?Port '
         line: "Port {{ ssh_port }}"
         state: present
-        backrefs: false
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Configure SSH - disable root login
@@ -225,7 +293,6 @@
         regexp: '^#?PermitRootLogin'
         line: 'PermitRootLogin no'
         state: present
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Configure SSH - disable password authentication
@@ -234,7 +301,6 @@
         regexp: '^#?PasswordAuthentication'
         line: 'PasswordAuthentication no'
         state: present
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Ensure SSH service is enabled and restarted
@@ -242,21 +308,18 @@
         name: ssh
         state: restarted
         enabled: true
-      when: not cp_install_only
       tags: [hardening]
 
     - name: UFW - set default inbound policy
       community.general.ufw:
         policy: deny
         direction: incoming
-      when: not cp_install_only
       tags: [hardening]
 
     - name: UFW - allow outbound policy
       community.general.ufw:
         direction: outgoing
         policy: allow
-      when: not cp_install_only
       tags: [hardening]
 
     - name: UFW - allow SSH configured port
@@ -264,7 +327,6 @@
         rule: allow
         port: "{{ ssh_port }}"
         proto: tcp
-      when: not cp_install_only
       tags: [hardening]
 
     - name: UFW - also allow default SSH (22) to avoid lockout (remove later)
@@ -272,7 +334,7 @@
         rule: allow
         port: "22"
         proto: tcp
-      when: not cp_install_only and ssh_port != 22
+      when: ssh_port != 22
       tags: [hardening]
 
     - name: UFW - allow base TCP ports
@@ -281,38 +343,11 @@
         port: "{{ item }}"
         proto: tcp
       loop: "{{ base_allowed_tcp_ports }}"
-      when: not cp_install_only
-      tags: [hardening]
-
-    - name: UFW - allow DNS if enabled (TCP)
-      community.general.ufw:
-        rule: allow
-        port: "53"
-        proto: tcp
-      when: not cp_install_only and enable_dns
-      tags: [hardening]
-
-    - name: UFW - allow DNS if enabled (UDP)
-      community.general.ufw:
-        rule: allow
-        port: "53"
-        proto: udp
-      when: not cp_install_only and enable_dns
-      tags: [hardening]
-
-    - name: UFW - allow mail ports if enabled
-      community.general.ufw:
-        rule: allow
-        port: "{{ item }}"
-        proto: tcp
-      loop: [25, 465, 587, 110, 143, 993, 995]
-      when: not cp_install_only and enable_mail
       tags: [hardening]
 
     - name: UFW - ensure firewall enabled
       community.general.ufw:
         state: enabled
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Configure Fail2Ban for SSH
@@ -331,7 +366,6 @@
           logpath = /var/log/auth.log
           backend = systemd
       notify: Restart Fail2Ban
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Ensure chrony is enabled and started
@@ -339,14 +373,13 @@
         name: chrony
         state: started
         enabled: true
-      when: not cp_install_only
       tags: [hardening]
 
     - name: Create swap file if enabled and no swap present
       ansible.builtin.command: fallocate -l {{ swap_size_gb }}G /swapfile
       args:
         creates: /swapfile
-      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
       tags: [hardening]
 
     - name: Set swap file permissions
@@ -355,70 +388,117 @@
         owner: root
         group: root
         mode: '0600'
-      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
       tags: [hardening]
 
     - name: Make swap
       ansible.builtin.command: mkswap /swapfile
-      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
       tags: [hardening]
 
     - name: Enable swap
       ansible.builtin.command: swapon /swapfile
-      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
       tags: [hardening]
 
     - name: Persist swap in fstab
-      ansible.builtin.mount:
+      ansible.posix.mount:
         name: none
         src: /swapfile
         fstype: swap
         opts: sw
         state: present
-      when: not cp_install_only and enable_swap and (ansible_swaptotal_mb | int) == 0
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
       tags: [hardening]
 
     - name: Reduce swappiness
-      ansible.builtin.sysctl:
+      ansible.posix.sysctl:
         name: vm.swappiness
         value: '10'
         state: present
         reload: true
-      when: not cp_install_only and enable_swap
+      when: enable_swap
       tags: [hardening]
 
-    - name: Download CyberPanel installer
-      ansible.builtin.get_url:
-        url: https://cyberpanel.net/install.sh
-        dest: /root/cyberpanel_install.sh
-        mode: '0755'
-      when: not hardening_only
-      tags: [cyberpanel]
+    - name: Install CloudPanel (CE)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -sSL https://installer.cloudpanel.io/ce/v2/install.sh -o /root/cloudpanel_install.sh
+        DB_ENGINE="{{ cloudpanel_db_engine }}" bash /root/cloudpanel_install.sh
+      args:
+        creates: /usr/sbin/cloudpanel
+        executable: /bin/bash
+      tags: [cloudpanel]
 
-    - name: Run CyberPanel installer (interactive via expect)
-      ansible.builtin.expect:
-        command: bash /root/cyberpanel_install.sh
-        timeout: 7200
-        creates: /usr/local/CyberCP
-        responses:
-          # General start/confirmation
-          '.*Install CyberPanel.*(y/n).*': 'y\n'
-          '.*Please choose a version.*Full.*\(1\).*Minimal.*\(2\).*': "{{ '1\n' if cp_full_install else '2\n' }}"
-          '.*Choose Web server.*OpenLiteSpeed.*\(1\).*LiteSpeed.*\(2\).*': "{{ '1\n' if cp_openlitespeed else '2\n' }}"
-          '.*Do you want to set up Remote MySQL.*(y/n).*': 'n\n'
-          '.*Do you want to install Memcached.*(Y/n|y/n).*': "{{ 'y\n' if cp_install_memcached else 'n\n' }}"
-          '.*Do you want to install Redis.*(Y/n|y/n).*': "{{ 'y\n' if cp_install_redis else 'n\n' }}"
-          '.*Do you want to install WatchDog.*(Y/n|y/n).*': "{{ 'y\n' if cp_install_watchdog else 'n\n' }}"
-          '.*Please enter your admin password.*': "{{ cp_admin_password }}\n"
-          '.*Retype your admin password.*': "{{ cp_admin_password }}\n"
-          '.*Press any key to continue.*': '\n'
-          '.*Would you like to restart.*(y/n).*': 'y\n'
-      register: cp_install_result
-      when: not hardening_only
-      tags: [cyberpanel]
+    - name: Calculate MariaDB buffer pool target
+      ansible.builtin.set_fact:
+        maria_buffer_pool_target_mb: "{{ (ansible_memtotal_mb | int * mariadb_buffer_pool_pct // 100) | int }}"
+      when: mariadb_tuning
+      tags: [cloudpanel, tuning]
+
+    - name: Set calculated MariaDB tuning values
+      ansible.builtin.set_fact:
+        maria_buffer_pool_mb: "{{ [ (maria_buffer_pool_target_mb | int), 512 ] | max }}"
+        maria_buffer_pool_instances: "{{ [ ( [ (maria_buffer_pool_mb | int // 1024), 8 ] | min ), 1 ] | max }}"
+        maria_log_file_size_mb: "{{ [ ( [ (maria_buffer_pool_mb | int * 25 // 100), 2048 ] | min ), 256 ] | max }}"
+      when: mariadb_tuning
+      tags: [cloudpanel, tuning]
+
+    - name: Set calculated Redis maxmemory (MB)
+      ansible.builtin.set_fact:
+        redis_maxmemory_mb: "{{ [ (ansible_memtotal_mb | int * redis_maxmemory_percent // 100), 256 ] | max }}"
+      when: enable_redis
+      tags: [cloudpanel, redis]
+
+    - name: Drop MariaDB performance tuning file
+      ansible.builtin.template:
+        src: templates/mariadb-tuning.cnf.j2
+        dest: /etc/mysql/mariadb.conf.d/90-cloudpanel-tuning.cnf
+        owner: root
+        group: root
+        mode: '0644'
+      when: mariadb_tuning
+      notify: Restart MariaDB
+      tags: [cloudpanel, tuning]
+
+    - name: Install Redis server
+      ansible.builtin.apt:
+        name: redis-server
+        state: present
+      when: enable_redis
+      tags: [cloudpanel, redis]
+
+    - name: Harden Redis configuration
+      ansible.builtin.template:
+        src: templates/redis.conf.j2
+        dest: /etc/redis/redis.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: enable_redis
+      notify: Restart Redis
+      tags: [cloudpanel, redis]
+
+    - name: Ensure Redis service is enabled
+      ansible.builtin.service:
+        name: redis-server
+        state: started
+        enabled: true
+      when: enable_redis
+      tags: [cloudpanel, redis]
 
   handlers:
     - name: Restart Fail2Ban
       ansible.builtin.service:
         name: fail2ban
+        state: restarted
+
+    - name: Restart MariaDB
+      ansible.builtin.service:
+        name: mariadb
+        state: restarted
+
+    - name: Restart Redis
+      ansible.builtin.service:
+        name: redis-server
         state: restarted
