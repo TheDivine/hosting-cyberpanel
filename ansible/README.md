@@ -17,7 +17,7 @@ Requirements
 
 Quick Start (Fresh Server)
 1) Edit `ansible/inventory.ini` to include your server and SSH details.
-2) Edit `ansible/group_vars/all.yml` to set hostname, SSH port, and admin password.
+2) Edit `ansible/group_vars/all.yml` to set hostname, SSH port, admin password, and `cloudpanel_db_engine` (`MYSQL_8.0` or `MARIADB_10.11`).
    - For password-based SSH, do not store the password in Git; run Ansible with prompts (`--ask-pass --ask-become-pass`).
 3) Create or copy an SSH key and test access (recommended)
    - Generate: `ssh-keygen -t ed25519 -a 100 -C "customer@<panel-fqdn>" -f ~/.ssh/id_ed25519_panel`
@@ -25,12 +25,19 @@ Quick Start (Fresh Server)
    - Test: `ssh -i ~/.ssh/id_ed25519_panel customer@<server-ip>`
    - Inventory defaults to this key path (`ansible/inventory.ini` already references `~/.ssh/id_ed25519_panel`); update if you store the key elsewhere.
 4) Ensure DNS A record points your FQDN to the server (e.g., `cyberpanel.naturecure.blog -> <server-ip>`).
-5) Run one of the playbooks (CloudPanel is the default recommendation). Each playbook now:
-   - Drops `/etc/apt/sources.list.d/ubuntu-official.list` and comments out `repo.nocix.net` entries so installs come from Canonical archives (needed for packages like ClamAV). Remove or adjust these tasks if your provider restricts external repos.
+5) Run one of the playbooks (CloudPanel is the default recommendation). Each playbook now removes nocix mirror entries and writes Canonical sources before installing packages; comment out those tasks if your provider forbids external mirrors.
 
    CloudPanel (default): ansible-playbook -i ansible/inventory.ini ansible/cloudpanel.yml
    CyberPanel:           ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
    HestiaCP:             ansible-playbook -i ansible/inventory.ini ansible/hestia.yml
+
+Manual CloudPanel path
+- CloudPanel’s installer also supports interactive runs. On the server:
+  - `curl -sS https://installer.cloudpanel.io/ce/v2/install.sh -o install.sh`
+  - `chmod +x install.sh`
+  - `DB_ENGINE=MYSQL_8.0 bash ./install.sh` *(or `DB_ENGINE=MARIADB_10.11 bash ./install.sh`)*
+- After manual install, reapply hardening only:
+  - `ansible-playbook -i ansible/inventory.ini ansible/cloudpanel.yml --skip-tags cloudpanel`
 
 Notes
 - By default, the playbook hardens the server and installs CyberPanel using OpenLiteSpeed.
