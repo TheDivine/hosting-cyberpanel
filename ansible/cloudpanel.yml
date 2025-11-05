@@ -58,7 +58,6 @@
           - ufw
           - fail2ban
           - unattended-upgrades
-          - apt-transport-https
           - ca-certificates
           - gnupg
           - software-properties-common
