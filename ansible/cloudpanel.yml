@@ -318,8 +318,75 @@
         executable: /bin/bash
       tags: [cloudpanel]
 
+    - name: Calculate MariaDB buffer pool target
+      ansible.builtin.set_fact:
+        maria_buffer_pool_target_mb: "{{ (ansible_memtotal_mb | int * mariadb_buffer_pool_pct // 100) | int }}"
+      when: mariadb_tuning
+      tags: [cloudpanel, tuning]
+
+    - name: Set calculated MariaDB tuning values
+      ansible.builtin.set_fact:
+        maria_buffer_pool_mb: "{{ [ (maria_buffer_pool_target_mb | int), 512 ] | max }}"
+        maria_buffer_pool_instances: "{{ [ ( [ (maria_buffer_pool_mb | int // 1024), 8 ] | min ), 1 ] | max }}"
+        maria_log_file_size_mb: "{{ [ ( [ (maria_buffer_pool_mb | int * 25 // 100), 2048 ] | min ), 256 ] | max }}"
+      when: mariadb_tuning
+      tags: [cloudpanel, tuning]
+
+    - name: Set calculated Redis maxmemory (MB)
+      ansible.builtin.set_fact:
+        redis_maxmemory_mb: "{{ [ (ansible_memtotal_mb | int * redis_maxmemory_percent // 100), 256 ] | max }}"
+      when: enable_redis
+      tags: [cloudpanel, redis]
+
+    - name: Drop MariaDB performance tuning file
+      ansible.builtin.template:
+        src: templates/mariadb-tuning.cnf.j2
+        dest: /etc/mysql/mariadb.conf.d/90-cloudpanel-tuning.cnf
+        owner: root
+        group: root
+        mode: '0644'
+      when: mariadb_tuning
+      notify: Restart MariaDB
+      tags: [cloudpanel, tuning]
+
+    - name: Install Redis server
+      ansible.builtin.apt:
+        name: redis-server
+        state: present
+      when: enable_redis
+      tags: [cloudpanel, redis]
+
+    - name: Harden Redis configuration
+      ansible.builtin.template:
+        src: templates/redis.conf.j2
+        dest: /etc/redis/redis.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: enable_redis
+      notify: Restart Redis
+      tags: [cloudpanel, redis]
+
+    - name: Ensure Redis service is enabled
+      ansible.builtin.service:
+        name: redis-server
+        state: started
+        enabled: true
+      when: enable_redis
+      tags: [cloudpanel, redis]
+
   handlers:
     - name: Restart Fail2Ban
       ansible.builtin.service:
         name: fail2ban
+        state: restarted
+
+    - name: Restart MariaDB
+      ansible.builtin.service:
+        name: mariadb
+        state: restarted
+
+    - name: Restart Redis
+      ansible.builtin.service:
+        name: redis-server
         state: restarted

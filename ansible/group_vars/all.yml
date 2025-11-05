@@ -45,3 +45,10 @@ maldet_scan_minute: 0
 # HestiaCP settings
 hestia_admin_email: "admin@example.com"
 hestia_admin_password: "ChangeMe-Strong-Password-123!"
+
+# CloudPanel extras
+enable_redis: true
+redis_bind_address: "127.0.0.1"
+redis_maxmemory_percent: 25   # percentage of total RAM to dedicate to Redis (maxmemory, approx)
+mariadb_tuning: true
+mariadb_buffer_pool_pct: 60    # % of total RAM for InnoDB buffer pool

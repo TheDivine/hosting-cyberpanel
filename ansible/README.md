@@ -24,11 +24,11 @@ Quick Start (Fresh Server)
    - Copy: `ssh-copy-id -i ~/.ssh/id_ed25519_panel.pub customer@<server-ip>`
    - Test: `ssh -i ~/.ssh/id_ed25519_panel customer@<server-ip>`
    - Optional inventory entry: add `ansible_ssh_private_key_file=~/.ssh/id_ed25519_panel`
-4) Ensure DNS A record points your FQDN to the server (e.g., `cyberpanel.naturecure.blog -> <server-ip>`), then run one of the playbooks:
+4) Ensure DNS A record points your FQDN to the server (e.g., `cyberpanel.naturecure.blog -> <server-ip>`), then run one of the playbooks (CloudPanel is the default recommendation):
 
-   CyberPanel:  ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
-   HestiaCP:    ansible-playbook -i ansible/inventory.ini ansible/hestia.yml
-   CloudPanel:  ansible-playbook -i ansible/inventory.ini ansible/cloudpanel.yml
+   CloudPanel (default): ansible-playbook -i ansible/inventory.ini ansible/cloudpanel.yml
+   CyberPanel:           ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+   HestiaCP:             ansible-playbook -i ansible/inventory.ini ansible/hestia.yml
 
 Notes
 - By default, the playbook hardens the server and installs CyberPanel using OpenLiteSpeed.
@@ -58,12 +58,24 @@ High-memory servers
 - With large RAM (e.g., 72 GiB), swap is not needed; this playbook sets `enable_swap: false` by default. If you want swap for crash-dumps or hibernation, flip it back to `true` and re-run.
 - Malware scans are scheduled with low CPU priority via `nice` and can be moved to off-peak hours using `clamav_scan_*`/`maldet_scan_*` variables.
 
-Malware Scanning
+Malware Scanning & Performance Automation
 - Controlled via `enable_clamav` and `enable_maldet` in `group_vars/all.yml`. Disable either if you prefer a different stack.
 - Default scan paths are set with `malware_scan_paths` (defaults to `/home`). Add additional directories that store customer content.
 - ClamAV signatures update automatically (`clamav-freshclam` service). Logs land in `/var/log/clamav/daily-scan.log`.
 - Maldet runs a daily background scan (`/usr/local/sbin/maldet -b`) and records detections in syslog (`journalctl -t maldet`).
-- Tune scan windows via `clamav_scan_*` and `maldet_scan_*` variables to fit off-peak hours.
+ - Tune scan windows via `clamav_scan_*` and `maldet_scan_*` variables to fit off-peak hours.
+- CloudPanel automation additionally:
+  - Tunes MariaDB automatically (`mariadb_tuning`, `mariadb_buffer_pool_pct`) and writes `/etc/mysql/mariadb.conf.d/90-cloudpanel-tuning.cnf`.
+  - Installs and hardens Redis (`enable_redis`, `redis_bind_address`, `redis_maxmemory_percent`) for WordPress object/page caching.
+  - All services restart as needed with handlers so your settings persist across runs.
+
+CloudPanel Variable Quick Reference (`ansible/group_vars/all.yml`)
+- `enable_redis`: Toggle Redis deployment (default true).
+- `redis_bind_address`: Usually `127.0.0.1`; change only if exposing Redis.
+- `redis_maxmemory_percent`: Percentage of total RAM reserved for Redis (default 25%).
+- `mariadb_tuning`: Enable/disable MariaDB tuning drop-in.
+- `mariadb_buffer_pool_pct`: Percent of RAM dedicated to InnoDB buffer pool (default 60%).
+- Values calculate dynamically per server; rerun the playbook after hardware changes to regenerate configs.
 
 Choose a Panel: Pros/Cons (quick)
 - CyberPanel (OpenLiteSpeed)
