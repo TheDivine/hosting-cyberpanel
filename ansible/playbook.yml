@@ -20,6 +20,18 @@
         name: "{{ cp_hostname }}"
       tags: [hardening]
 
+    - name: Ensure official Ubuntu repositories are available
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/ubuntu-official.list
+        content: |
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} main universe multiverse
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }}-updates main universe multiverse
+          deb http://security.ubuntu.com/ubuntu {{ ansible_distribution_release }}-security main universe multiverse
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [hardening]
+
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: true
