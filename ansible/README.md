@@ -34,9 +34,19 @@ Security Defaults
 - Enables Fail2Ban for SSH.
 - Enables unattended security updates and time sync.
 
+SSH Key Setup (first run ease and security)
+- Generate a key on your control machine: `ssh-keygen -t ed25519 -a 100 -C "customer@cpanel" -f ~/.ssh/id_ed25519_cpanel`
+- Copy it to the server (will prompt for your password): `ssh-copy-id -i ~/.ssh/id_ed25519_cpanel.pub -p 22 customer@<SERVER_IP>`
+- Test login: `ssh -i ~/.ssh/id_ed25519_cpanel -p 22 customer@<SERVER_IP>`
+- Optional: set `ansible_ssh_private_key_file=~/.ssh/id_ed25519_cpanel` in `ansible/inventory.ini` to use the key automatically.
+
 Bare Metal vs VPS
 - CyberPanel supports both. Use a fresh OS install with no pre-installed web stacks.
 - Minimum 2 GB RAM recommended (more for multiple WordPress sites). Swap is enabled if configured.
+
+High-memory servers
+- With large RAM (e.g., 72 GiB), swap is not needed; this playbook sets `enable_swap: false` by default. If you want swap for crash-dumps or hibernation, flip it back to `true` and re-run.
+- Malware scans are scheduled with low CPU priority via `nice` and can be moved to off-peak hours using `clamav_scan_*`/`maldet_scan_*` variables.
 
 Malware Scanning
 - Controlled via `enable_clamav` and `enable_maldet` in `group_vars/all.yml`. Disable either if you prefer a different stack.

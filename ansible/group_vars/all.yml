@@ -11,7 +11,7 @@ admin_pubkey: "ssh-ed25519 AAAA...replace_with_your_public_key"
 ssh_port: 22
 
 # Enable swap on systems with low memory
-enable_swap: true
+enable_swap: false
 swap_size_gb: 2
 
 # Open optional services in firewall
