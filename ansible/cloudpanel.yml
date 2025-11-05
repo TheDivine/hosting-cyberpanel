@@ -56,6 +56,42 @@
         label: "{{ item }}"
       tags: [hardening]
 
+    - name: Find any apt config files that may reference nocix
+      ansible.builtin.find:
+        paths: /etc/apt
+        recurse: true
+        patterns: '*.list,*.sources,*.conf,*.cfg'
+        file_type: file
+      register: apt_any_configs
+      failed_when: false
+      tags: [hardening]
+
+    - name: Replace nocix URIs with Canonical archive in any apt config
+      ansible.builtin.replace:
+        path: "{{ item.path }}"
+        regexp: 'http://repo\\.nocix\\.net/repo/ubuntu'
+        replace: 'http://archive.ubuntu.com/ubuntu'
+      loop: "{{ apt_any_configs.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path }}"
+      tags: [hardening]
+
+    - name: Disable nocix in Deb822 sources (set Enabled: no where URIs match nocix)
+      ansible.builtin.replace:
+        path: "{{ item.path }}"
+        regexp: '^(Enabled:\\s*)yes$'
+        replace: '\\1no'
+      loop: "{{ apt_any_configs.files | default([]) }}"
+      when: item.path is match('.*\\.sources$')
+      loop_control:
+        label: "{{ item.path }}"
+      tags: [hardening]
+
+    - name: Clean APT cache after source changes
+      ansible.builtin.command: apt-get clean
+      changed_when: false
+      tags: [hardening]
+
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: true
