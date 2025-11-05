@@ -68,6 +68,84 @@
         state: present
       tags: [hardening]
 
+    - name: Install ClamAV malware scanner
+      ansible.builtin.apt:
+        name:
+          - clamav
+          - clamav-daemon
+        state: present
+      when: enable_clamav
+      tags: [malware]
+
+    - name: Ensure ClamAV log directory exists
+      ansible.builtin.file:
+        path: /var/log/clamav
+        state: directory
+        owner: root
+        group: clamav
+        mode: '0750'
+      when: enable_clamav
+      tags: [malware]
+
+    - name: Ensure FreshClam signature service is running
+      ansible.builtin.service:
+        name: clamav-freshclam
+        state: started
+        enabled: true
+      when: enable_clamav
+      tags: [malware]
+
+    - name: Schedule daily ClamAV scan
+      ansible.builtin.cron:
+        name: Daily ClamAV scan
+        user: root
+        hour: "{{ clamav_scan_hour }}"
+        minute: "{{ clamav_scan_minute }}"
+        job: "/usr/bin/nice -n 15 /usr/bin/clamscan --recursive --infected --log=/var/log/clamav/daily-scan.log {{ malware_scan_paths | join(' ') }} || true"
+      when: enable_clamav
+      tags: [malware]
+
+    - name: Install Linux Malware Detect
+      ansible.builtin.shell: |
+        set -euo pipefail
+        tmpdir=$(mktemp -d)
+        trap 'rm -rf "$tmpdir"' EXIT
+        cd "$tmpdir"
+        wget -q https://www.rfxn.com/downloads/maldetect-current.tar.gz
+        set +o pipefail
+        top_entry=$(tar -tzf maldetect-current.tar.gz | head -n1 | cut -d/ -f1 || true)
+        set -o pipefail
+        if [ -z "$top_entry" ]; then
+          echo "Failed to determine maldetect directory from archive" >&2
+          exit 1
+        fi
+        tar -xzf maldetect-current.tar.gz
+        cd "$top_entry"
+        ./install.sh >/dev/null
+      args:
+        creates: /usr/local/sbin/maldet
+        executable: /bin/bash
+      when: enable_maldet
+      tags: [malware]
+
+    - name: Enable ClamAV engine within Maldet
+      ansible.builtin.lineinfile:
+        path: /usr/local/maldetect/conf.maldet
+        regexp: '^scan_clamscan='
+        line: 'scan_clamscan="1"'
+      when: enable_maldet and enable_clamav
+      tags: [malware]
+
+    - name: Schedule daily Maldet scan
+      ansible.builtin.cron:
+        name: Daily Maldet scan
+        user: root
+        hour: "{{ maldet_scan_hour }}"
+        minute: "{{ maldet_scan_minute }}"
+        job: "/usr/bin/nice -n 15 /usr/local/sbin/maldet -b -r {{ malware_scan_paths | join(' ') }} 2>&1 | /usr/bin/logger -t maldet"
+      when: enable_maldet
+      tags: [malware]
+
     - name: Configure unattended upgrades
       ansible.builtin.copy:
         dest: /etc/apt/apt.conf.d/50unattended-upgrades
@@ -185,6 +263,51 @@
         enabled: true
       tags: [hardening]
 
+    - name: Create swap file if enabled and no swap present
+      ansible.builtin.command: fallocate -l {{ swap_size_gb }}G /swapfile
+      args:
+        creates: /swapfile
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Set swap file permissions
+      ansible.builtin.file:
+        path: /swapfile
+        owner: root
+        group: root
+        mode: '0600'
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Make swap
+      ansible.builtin.command: mkswap /swapfile
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Enable swap
+      ansible.builtin.command: swapon /swapfile
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Persist swap in fstab
+      ansible.posix.mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+      when: enable_swap and (ansible_swaptotal_mb | int) == 0
+      tags: [hardening]
+
+    - name: Reduce swappiness
+      ansible.posix.sysctl:
+        name: vm.swappiness
+        value: '10'
+        state: present
+        reload: true
+      when: enable_swap
+      tags: [hardening]
+
     - name: Install CloudPanel (CE)
       ansible.builtin.shell: |
         set -euo pipefail
@@ -200,4 +323,3 @@
       ansible.builtin.service:
         name: fail2ban
         state: restarted
-
