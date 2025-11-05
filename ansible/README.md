@@ -15,6 +15,7 @@ Requirements
 Quick Start
 1) Edit `ansible/inventory.ini` to include your server and SSH details.
 2) Edit `ansible/group_vars/all.yml` to set hostname, SSH port, and admin password.
+   - For password-based SSH, do not store the password in Git; run Ansible with prompts (`--ask-pass --ask-become-pass`).
 3) Run:
 
    ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
@@ -24,6 +25,7 @@ Notes
 - Set `enable_dns`/`enable_mail` to true in `group_vars/all.yml` if you plan to run DNS or mail on the panel host; firewall rules will be opened accordingly.
 - Installation uses the upstream CyberPanel installer. The playbook attempts to answer prompts via Ansible's `expect` module. If the installer changes prompts, you may need to adjust `responses` patterns in `playbook.yml`.
 - After install, visit https://your-fqdn-or-ip:8090/ and log in as `admin` using the password you set.
+- Password-based SSH is supported but discouraged; if you temporarily rely on it, run with `--ask-pass --ask-become-pass` (or export `ansible_password`/`ansible_become_password` securely) and avoid committing credentials to Git.
 
 Security Defaults
 - Creates a new sudo user and disables root SSH login and password auth (key-based only).
