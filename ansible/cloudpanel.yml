@@ -20,40 +20,79 @@
         name: "{{ cp_hostname }}"
       tags: [hardening]
 
-    - name: Ensure official Ubuntu repositories are available
+    - name: Check if primary apt sources list exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list
+      register: apt_sources_list_stat
+      tags: [hardening]
+
+    - name: Check if provider sources backup exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.provider
+      register: apt_sources_backup_stat
+      tags: [hardening]
+
+    - name: Backup provider sources list
       ansible.builtin.copy:
-        dest: /etc/apt/sources.list.d/ubuntu-official.list
-        content: |
-          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} main universe multiverse
-          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }}-updates main universe multiverse
-          deb http://security.ubuntu.com/ubuntu {{ ansible_distribution_release }}-security main universe multiverse
+        src: /etc/apt/sources.list
+        dest: /etc/apt/sources.list.provider
         owner: root
         group: root
         mode: '0644'
+        remote_src: true
+      when: apt_sources_list_stat.stat.exists and not apt_sources_backup_stat.stat.exists
       tags: [hardening]
 
-    - name: Gather optional apt source list files
+    - name: Remove existing primary apt sources list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list
+        state: absent
+      when: apt_sources_list_stat.stat.exists
+      tags: [hardening]
+
+    - name: Check if /etc/apt/sources.list.d exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d
+      register: apt_sources_d_stat
+      tags: [hardening]
+
+    - name: Find apt source snippets (.list)
       ansible.builtin.find:
         paths: /etc/apt/sources.list.d
         patterns: '*.list'
         file_type: file
-      register: apt_source_lists
-      failed_when: false
+      register: apt_list_snippets
+      when: apt_sources_d_stat.stat.exists
       tags: [hardening]
 
-    - name: Build list of apt source files
-      ansible.builtin.set_fact:
-        nocix_list_files: "{{ ['/etc/apt/sources.list'] + (apt_source_lists.files | default([]) | map(attribute='path') | list) }}"
+    - name: Find apt source snippets (.sources)
+      ansible.builtin.find:
+        paths: /etc/apt/sources.list.d
+        patterns: '*.sources'
+        file_type: file
+      register: apt_sources_snippets
+      when: apt_sources_d_stat.stat.exists
       tags: [hardening]
 
-    - name: Disable provider mirror entries (repo.nocix.net)
-      ansible.builtin.replace:
-        path: "{{ item }}"
-        regexp: '^(deb.*repo\\.nocix\\.net.*)$'
-        replace: '# \1'
-      loop: "{{ nocix_list_files }}"
-      loop_control:
-        label: "{{ item }}"
+    - name: Remove provider apt source snippets
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ (apt_list_snippets.files | default([])) + (apt_sources_snippets.files | default([])) }}"
+      when: (apt_list_snippets is defined) or (apt_sources_snippets is defined)
+      tags: [hardening]
+
+    - name: Ensure canonical apt sources list present
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list
+        content: |
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }}-updates main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }}-backports main restricted universe multiverse
+          deb http://security.ubuntu.com/ubuntu {{ ansible_distribution_release }}-security main restricted universe multiverse
+        owner: root
+        group: root
+        mode: '0644'
       tags: [hardening]
 
     - name: Find any apt config files that may reference nocix
@@ -66,7 +105,7 @@
       failed_when: false
       tags: [hardening]
 
-    - name: Replace nocix URIs with Canonical archive in any apt config
+    - name: Replace nocix URIs with Canonical archive in apt config
       ansible.builtin.replace:
         path: "{{ item.path }}"
         regexp: 'http://repo\\.nocix\\.net/repo/ubuntu'
