@@ -115,7 +115,7 @@
         label: "{{ item.path }}"
       tags: [hardening]
 
-    - name: Disable nocix in Deb822 sources (set Enabled: no)
+    - name: "Disable nocix in Deb822 sources (set Enabled: no)"
       ansible.builtin.replace:
         path: "{{ item.path }}"
         regexp: '^(Enabled:\\s*)yes$'
