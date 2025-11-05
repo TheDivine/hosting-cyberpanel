@@ -1,7 +1,7 @@
 # Global variables for CyberPanel deployment
 
 # FQDN for the server (must resolve to the server's IP)
-cp_hostname: "cpanel.kwiki.it.com"
+cp_hostname: "cyberpanel.naturecure.blog"
 
 # Create a sudo user for admin access (SSH key required)
 admin_user: "customer"

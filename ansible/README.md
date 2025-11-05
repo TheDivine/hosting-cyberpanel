@@ -5,9 +5,9 @@ Overview
 - Applies baseline server hardening (SSH, firewall, fail2ban, unattended upgrades, swap, time sync).
 - Opens only required ports (80/443/8090 by default). Optional DNS and mail ports are toggleable.
 - Adds optional scheduled malware scanning (ClamAV + Linux Malware Detect).
- - Alternative playbooks included for HestiaCP and CloudPanel:
-   - HestiaCP: `ansible/hestia.yml` (panel on 8083)
-   - CloudPanel: `ansible/cloudpanel.yml` (panel on 8443)
+- Alternative playbooks included for HestiaCP and CloudPanel:
+  - HestiaCP: `ansible/hestia.yml` (panel on 8083)
+  - CloudPanel: `ansible/cloudpanel.yml` (panel on 8443)
 
 Requirements
 - Target: Fresh Ubuntu 22.04 VPS or bare‑metal server with FQDN ready (e.g., panel.example.com)
@@ -15,11 +15,16 @@ Requirements
 - If using the automated installer step: Python `pexpect` on the control node (`pip install pexpect`)
 - UFW tasks use the `community.general` collection (`ansible-galaxy collection install community.general`)
 
-Quick Start
+Quick Start (Fresh Server)
 1) Edit `ansible/inventory.ini` to include your server and SSH details.
 2) Edit `ansible/group_vars/all.yml` to set hostname, SSH port, and admin password.
    - For password-based SSH, do not store the password in Git; run Ansible with prompts (`--ask-pass --ask-become-pass`).
-3) Run one of the playbooks:
+3) Create or copy an SSH key and test access (recommended)
+   - Generate: `ssh-keygen -t ed25519 -a 100 -C "customer@<panel-fqdn>" -f ~/.ssh/id_ed25519_panel`
+   - Copy: `ssh-copy-id -i ~/.ssh/id_ed25519_panel.pub customer@<server-ip>`
+   - Test: `ssh -i ~/.ssh/id_ed25519_panel customer@<server-ip>`
+   - Optional inventory entry: add `ansible_ssh_private_key_file=~/.ssh/id_ed25519_panel`
+4) Ensure DNS A record points your FQDN to the server (e.g., `cyberpanel.naturecure.blog -> <server-ip>`), then run one of the playbooks:
 
    CyberPanel:  ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
    HestiaCP:    ansible-playbook -i ansible/inventory.ini ansible/hestia.yml
@@ -36,7 +41,7 @@ Security Defaults
 - Creates a new sudo user and disables root SSH login and password auth (key-based only).
 - Changes SSH port (set via `ssh_port`). Make sure your security groups/firewalls allow it.
 - Enables UFW with default deny inbound, allow outbound.
-- Enables Fail2Ban for SSH.
+- Enables Fail2Ban for SSH (all playbooks configure `jail.local`).
 - Enables unattended security updates and time sync.
 
 SSH Key Setup (first run ease and security)
