@@ -52,3 +52,4 @@ redis_bind_address: "127.0.0.1"
 redis_maxmemory_percent: 25   # percentage of total RAM to dedicate to Redis (maxmemory, approx)
 mariadb_tuning: true
 mariadb_buffer_pool_pct: 60    # % of total RAM for InnoDB buffer pool
+cloudpanel_db_engine: "MARIADB_10.11"

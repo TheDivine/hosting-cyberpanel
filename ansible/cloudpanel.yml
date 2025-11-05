@@ -424,7 +424,7 @@
       ansible.builtin.shell: |
         set -euo pipefail
         curl -sSL https://installer.cloudpanel.io/ce/v2/install.sh -o /root/cloudpanel_install.sh
-        bash /root/cloudpanel_install.sh
+        CLOUDPANEL_DB_ENGINE="{{ cloudpanel_db_engine }}" bash /root/cloudpanel_install.sh
       args:
         creates: /usr/sbin/cloudpanel
         executable: /bin/bash
