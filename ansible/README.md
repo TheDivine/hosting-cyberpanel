@@ -25,7 +25,8 @@ Quick Start (Fresh Server)
    - Test: `ssh -i ~/.ssh/id_ed25519_panel customer@<server-ip>`
    - Inventory defaults to this key path (`ansible/inventory.ini` already references `~/.ssh/id_ed25519_panel`); update if you store the key elsewhere.
 4) Ensure DNS A record points your FQDN to the server (e.g., `cyberpanel.naturecure.blog -> <server-ip>`).
-5) Run one of the playbooks (CloudPanel is the default recommendation). Each playbook now drops `/etc/apt/sources.list.d/ubuntu-official.list` so the server pulls packages from Canonical archives even if your provider mirrors are missing items like ClamAV. If your provider forbids external repos, comment out that task before running.
+5) Run one of the playbooks (CloudPanel is the default recommendation). Each playbook now:
+   - Drops `/etc/apt/sources.list.d/ubuntu-official.list` and comments out `repo.nocix.net` entries so installs come from Canonical archives (needed for packages like ClamAV). Remove or adjust these tasks if your provider restricts external repos.
 
    CloudPanel (default): ansible-playbook -i ansible/inventory.ini ansible/cloudpanel.yml
    CyberPanel:           ansible-playbook -i ansible/inventory.ini ansible/playbook.yml

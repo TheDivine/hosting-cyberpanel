@@ -32,6 +32,22 @@
         mode: '0644'
       tags: [hardening]
 
+    - name: Gather provider mirror list files
+      ansible.builtin.set_fact:
+        nocix_list_files: "{{ ['/etc/apt/sources.list'] + lookup('ansible.builtin.fileglob', '/etc/apt/sources.list.d/*.list', wantlist=True) }}"
+      tags: [hardening]
+
+    - name: Disable provider mirror entries (repo.nocix.net)
+      ansible.builtin.replace:
+        path: "{{ item }}"
+        regexp: '^(deb.*repo\\.nocix\\.net.*)$'
+        replace: '# \1'
+      loop: "{{ nocix_list_files }}"
+      loop_control:
+        label: "{{ item }}"
+      when: nocix_list_files is defined
+      tags: [hardening]
+
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: true
