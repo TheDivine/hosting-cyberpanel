@@ -121,6 +121,7 @@
         ./install.sh >/dev/null
       args:
         creates: /usr/local/sbin/maldet
+        executable: /bin/bash
       when: not cp_install_only and enable_maldet
       tags: [malware]
 
