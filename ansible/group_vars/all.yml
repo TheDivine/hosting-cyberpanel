@@ -41,3 +41,7 @@ clamav_scan_hour: 3
 clamav_scan_minute: 30
 maldet_scan_hour: 2
 maldet_scan_minute: 0
+
+# HestiaCP settings
+hestia_admin_email: "admin@example.com"
+hestia_admin_password: "ChangeMe-Strong-Password-123!"

@@ -5,6 +5,9 @@ Overview
 - Applies baseline server hardening (SSH, firewall, fail2ban, unattended upgrades, swap, time sync).
 - Opens only required ports (80/443/8090 by default). Optional DNS and mail ports are toggleable.
 - Adds optional scheduled malware scanning (ClamAV + Linux Malware Detect).
+ - Alternative playbooks included for HestiaCP and CloudPanel:
+   - HestiaCP: `ansible/hestia.yml` (panel on 8083)
+   - CloudPanel: `ansible/cloudpanel.yml` (panel on 8443)
 
 Requirements
 - Target: Fresh Ubuntu 22.04 VPS or bare‑metal server with FQDN ready (e.g., panel.example.com)
@@ -16,9 +19,11 @@ Quick Start
 1) Edit `ansible/inventory.ini` to include your server and SSH details.
 2) Edit `ansible/group_vars/all.yml` to set hostname, SSH port, and admin password.
    - For password-based SSH, do not store the password in Git; run Ansible with prompts (`--ask-pass --ask-become-pass`).
-3) Run:
+3) Run one of the playbooks:
 
-   ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+   CyberPanel:  ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+   HestiaCP:    ansible-playbook -i ansible/inventory.ini ansible/hestia.yml
+   CloudPanel:  ansible-playbook -i ansible/inventory.ini ansible/cloudpanel.yml
 
 Notes
 - By default, the playbook hardens the server and installs CyberPanel using OpenLiteSpeed.
@@ -54,6 +59,17 @@ Malware Scanning
 - ClamAV signatures update automatically (`clamav-freshclam` service). Logs land in `/var/log/clamav/daily-scan.log`.
 - Maldet runs a daily background scan (`/usr/local/sbin/maldet -b`) and records detections in syslog (`journalctl -t maldet`).
 - Tune scan windows via `clamav_scan_*` and `maldet_scan_*` variables to fit off-peak hours.
+
+Choose a Panel: Pros/Cons (quick)
+- CyberPanel (OpenLiteSpeed)
+  - Pros: Very fast LSCache/QUIC; WP one-click; free OLS.
+  - Cons: Some advanced manager features are paid.
+- HestiaCP (Nginx+PHP-FPM)
+  - Pros: Free, simple, built-in quick install for WordPress; familiar panel.
+  - Cons: Fewer performance features vs OLS unless tuned; app installer is basic.
+- CloudPanel (Nginx + PHP-FPM, MariaDB)
+  - Pros: Modern UI, one-click WordPress, multiple PHP versions per site.
+  - Cons: Opinionated stack; fewer bundled mail/DNS features (good if you separate mail/DNS).
 
 WordPress Hosting Best Practices
 - Create a dedicated CyberPanel website (and system user) per customer. Apply resource limits via Packages for predictable performance.
