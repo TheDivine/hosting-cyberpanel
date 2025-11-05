@@ -117,7 +117,13 @@
         cd "$tmpdir"
         wget -q https://www.rfxn.com/downloads/maldetect-current.tar.gz
         # Determine extracted directory name from the archive contents (first top-level entry)
-        top_entry=$(tar -tzf maldetect-current.tar.gz | head -1 | cut -d/ -f1)
+        set +o pipefail
+        top_entry=$(tar -tzf maldetect-current.tar.gz | head -n1 | cut -d/ -f1 || true)
+        set -o pipefail
+        if [ -z "$top_entry" ]; then
+          echo "Failed to determine maldetect directory from archive" >&2
+          exit 1
+        fi
         tar -xzf maldetect-current.tar.gz
         cd "$top_entry"
         ./install.sh >/dev/null
